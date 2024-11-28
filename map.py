@@ -1,122 +1,199 @@
 import numpy as np
+from dataclasses import dataclass
 from typing import Self
 
+@dataclass
 class Character:
-    def __init__(self: Self, character_id: int, start_x: int, start_y: int, data: np.ndarray) -> None:
-        """
-        Inicjalizuje postać z unikalnym ID, pozycją początkową i dodatkowymi danymi.
-        
-        :param character_id: Unikalne ID postaci (int).
-        :param start_x: Pozycja startowa X.
-        :param start_y: Pozycja startowa Y.
-        :param data: Dane związane z postacią (dowolne w formacie np.ndarray).
-        """
-        self.character_id: int = character_id
-        self.x: int = start_x
-        self.y: int = start_y
-        self.data: np.ndarray = data  # np.ndarray, reprezentujące dane postaci
+	character_id: int
+	x: int
+	y: int
+	data: np.ndarray
+
 
 class Map:
-    def __init__(self: Self, width: int, height: int) -> None:
-        """
-        Tworzy mapę o określonych wymiarach.
-        
-        :param width: Szerokość mapy.
-        :param height: Wysokość mapy.
-        """
-        self.width: int = width
-        self.height: int = height
-        self.characters: dict = {}  # Słownik przechowujący postacie według ich ID
-        # Tablica przechowująca referencje do postaci lub None
-        self.grid = np.full((width, height), None, dtype=object)
+	def __init__(self: Self, width: int, height: int, max_characters: int, data_length: int) -> None:
+		"""
+		Tworzy mapę o określonych wymiarach i maksymalnej liczbie postaci.
 
-    def add_character(self: Self, character_id: int, start_x: int, start_y: int, data: np.ndarray) -> None:
-        """
-        Dodaje nową postać na mapę.
-        
-        :param character_id: Unikalne ID postaci (int).
-        :param start_x: Pozycja startowa X.
-        :param start_y: Pozycja startowa Y.
-        :param data: Dane związane z postacią.
-        """
-        if character_id in self.characters:
-            raise ValueError(f"Postać o ID '{character_id}' już istnieje.")
-        if not (0 <= start_x < self.width and 0 <= start_y < self.height):
-            raise ValueError("Pozycja początkowa poza granicami mapy.")
-        if self.grid[start_x, start_y] is not None:
-            raise ValueError(f"Pole ({start_x}, {start_y}) jest już zajęte.")
+		:param width: Szerokość mapy.
+		:param height: Wysokość mapy.
+		:param max_characters: Maksymalna liczba postaci na mapie.
+		:param data_length: Rozmiar danych każdej postaci.
+		"""
+		self.width: int = width
+		self.height: int = height
+		self.max_characters: int = max_characters
+		self.data_length: int = data_length
 
-        character: Character = Character(character_id, start_x, start_y, data)
-        self.characters[character_id] = character
-        self.grid[start_x, start_y] = character
+		# Mapa zawierająca ID postaci (lub -1 oznaczające brak postaci)
+		self.grid: np.ndarray = np.full((width, height), -1, dtype=np.int32)
 
-    def move_character(self: Self, character_id: int, dx: int, dy: int) -> None:
-        """
-        Porusza postać o podanym ID w określonym kierunku.
-        
-        :param character_id: ID postaci (int).
-        :param dx: Zmiana współrzędnej X.
-        :param dy: Zmiana współrzędnej Y.
-        """
-        if character_id not in self.characters:
-            raise ValueError(f"Postać o ID '{character_id}' nie istnieje.")
-        
-        character: Character = self.characters[character_id]
-        new_x = character.x + dx
-        new_y = character.y + dy
+		# Dane wszystkich postaci
+		self.characters: np.ndarray = np.zeros(
+			(max_characters, 3 + data_length), dtype=np.float64
+		)  # [character_id, x, y, data...]
 
-        # Sprawdź granice mapy
-        if 0 <= new_x < self.width and 0 <= new_y < self.height:
-            if self.grid[new_x, new_y] is not None:
-                raise ValueError(f"Pole ({new_x}, {new_y}) jest już zajęte.")
-            
-            # Aktualizuj pozycję
-            self.grid[character.x, character.y] = None
-            character.x = new_x
-            character.y = new_y
-            self.grid[new_x, new_y] = character
-        else:
-            print("Ruch poza granice mapy!")
+		# Maska śledząca, czy slot w `self.characters` jest zajęty
+		self.character_active: np.ndarray = np.zeros(max_characters, dtype=bool)
 
-    def get_surroundings(self: Self, character_id: int) -> np.ndarray:
-        """
-        Zwraca otoczenie 2 pikseli dookoła postaci o podanym ID.
-        
-        :param character_id: ID postaci (int).
-        :return: np.ndarray zawierający dane postaci lub None.
-        """
-        if character_id not in self.characters:
-            raise ValueError(f"Postać o ID '{character_id}' nie istnieje.")
-        
-        character = self.characters[character_id]
-        x, y = character.x, character.y
+	def add_character(self: Self, character_id: int, start_x: int, start_y: int, data: np.ndarray) -> None:
+		if self.character_active[character_id]:
+			raise ValueError(f"Postać o ID '{character_id}' już istnieje.")
+		if not (0 <= start_x < self.width and 0 <= start_y < self.height):
+			raise ValueError("Pozycja początkowa poza granicami mapy.")
+		if self.grid[start_x, start_y] != -1:
+			raise ValueError(f"Pole ({start_x}, {start_y}) jest już zajęte.")
+		if len(data) != self.data_length:
+			raise ValueError(f"Dane muszą mieć długość {self.data_length}.")
 
-        # Wyznacz granice otoczenia
-        x_min = max(0, x - 2)
-        x_max = min(self.width, x + 3)
-        y_min = max(0, y - 2)
-        y_max = min(self.height, y + 3)
+		# Dodaj postać
+		self.grid[start_x, start_y] = character_id
+		self.characters[character_id, 0] = character_id
+		self.characters[character_id, 1] = start_x
+		self.characters[character_id, 2] = start_y
+		self.characters[character_id, 3:] = data
+		self.character_active[character_id] = True
 
-        # Wytnij otoczenie z siatki mapy
-        surroundings = self.grid[x_min:x_max, y_min:y_max]
-        return np.vectorize(lambda obj: obj.data if obj else None)(surroundings)
+	def move_character(self: Self, character_id: int, dx: int, dy: int) -> None:
+		if not self.character_active[character_id]:
+			raise ValueError(f"Postać o ID '{character_id}' nie istnieje.")
 
-# Przykład użycia
-if __name__ == "__main__":
-    # Tworzymy mapę o rozmiarze 10x10
-    game_map = Map(10, 10)
+		x, y = self.characters[character_id, 1:3].astype(int)
+		new_x = x + dx
+		new_y = y + dy
 
-    # Dodajemy postacie z różnymi danymi
-    game_map.add_character(1, 5, 5, np.array([100, 50]))  # np.ndarray reprezentujące np. zdrowie i moc
-    game_map.add_character(2, 3, 3, np.array([70, 30]))
+		# Sprawdzenie granic mapy
+		if not (0 <= new_x < self.width and 0 <= new_y < self.height):
+			raise ValueError(f"Ruch poza granice mapy: ({new_x}, {new_y}).")
 
-    # Poruszamy postać
-    game_map.move_character(1, 0, 1)
+		if self.grid[new_x, new_y] != -1:
+			raise ValueError(f"Pole ({new_x}, {new_y}) jest już zajęte.")
 
-    # Pobieramy otoczenie
-    print("Otoczenie postaci 1:")
-    print(game_map.get_surroundings(1))
+		# Przenieś postać
+		self.grid[x, y] = -1
+		self.grid[new_x, new_y] = character_id
+		self.characters[character_id, 1:3] = [new_x, new_y]
 
-    # Wyświetlamy otoczenie drugiej postaci
-    print("Otoczenie postaci 2:")
-    print(game_map.get_surroundings(2))
+	def get_surroundings(self: Self, character_id: int) -> np.ndarray:
+		if not self.character_active[character_id]:
+			raise ValueError(f"Postać o ID '{character_id}' nie istnieje.")
+
+		x, y = self.characters[character_id, 1:3].astype(int)
+		surroundings = np.zeros((5, 5), dtype=int)  # Twórz zawsze siatkę 5x5 z zerami
+		x_min, x_max = max(0, x - 2), min(self.width, x + 3)
+		y_min, y_max = max(0, y - 2), min(self.height, y + 3)
+
+		surrounding_ids = self.grid[x_min:x_max, y_min:y_max]
+
+		for i in range(surrounding_ids.shape[0]):
+			for j in range(surrounding_ids.shape[1]):
+				char_id = surrounding_ids[i, j]
+				if char_id != -1:  # Jeśli pole jest pełne
+					surroundings[i, j] = 1
+
+		# Usuń środkowy element
+		surroundings = np.delete(surroundings.flatten(), 12)
+		return surroundings
+
+	def get_all_characters_data(self) -> np.ndarray:
+		active_indices = np.where(self.character_active)[0]
+		return self.characters[active_indices]
+
+	def find_character_by_id(self: Self, character_id: int) -> np.ndarray:
+		if not self.character_active[character_id]:
+			raise ValueError(f"Postać o ID '{character_id}' nie istnieje.")
+		return self.characters[character_id]
+
+	def get_reward(self: Self) -> int:
+		"""
+		Oblicza nagrodę na podstawie pozycji postaci.
+		Zaczyna od 0 punktów i odejmuje 100 za każdą postać, która
+		bezpośrednio obok siebie nie ma żadnej innej postaci.
+
+		:return: Łączna nagroda.
+		"""
+		reward = 0  # Początkowa nagroda
+
+		# Przechodzimy przez wszystkie aktywne postacie
+		for character_id in np.where(self.character_active)[0]:
+			x, y = self.characters[character_id, 1:3].astype(int)
+
+			# Sprawdzamy sąsiadujące pola (góra, dół, lewo, prawo)
+			neighbors = [
+				(x - 1, y), (x + 1, y),  # Góra, dół
+				(x, y - 1), (x, y + 1)   # Lewo, prawo
+			]
+			neighbor_count = 0
+
+			for nx, ny in neighbors:
+				if 0 <= nx < self.width and 0 <= ny < self.height:
+					if self.grid[nx, ny] != -1:  # Znaleziono sąsiada
+						neighbor_count += 1
+						
+
+			# Jeśli nie ma żadnego sąsiada, odejmujemy 100 punktów
+			if neighbor_count == 0 or neighbor_count == 4:
+				reward -= 1
+			elif neighbor_count == 2:
+				reward += 2
+			elif neighbor_count == 3:
+				reward += 1
+			
+
+		return reward
+	
+	def possible_moves(self: Self, character_id: int) -> list[bool]:
+		"""
+		Sprawdza możliwe ruchy dla postaci w czterech kierunkach, uwzględniając, czy pole jest wolne.
+
+		:param character_id: ID postaci.
+		:return: Lista czterech wartości logicznych [góra, dół, lewo, prawo].
+		"""
+		if not self.character_active[character_id]:
+			raise ValueError(f"Postać o ID '{character_id}' nie istnieje.")
+
+		x, y = self.characters[character_id, 1:3].astype(int)
+		
+		# Lista ruchów: [góra, dół, lewo, prawo]
+		moves = [False, False, False, False]
+
+		directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]  # [góra, dół, lewo, prawo]
+
+		for i, (dx, dy) in enumerate(directions):
+			nx, ny = x + dx, y + dy
+			if 0 <= nx < self.width and 0 <= ny < self.height:
+				# Sprawdzenie, czy pole nie jest zajęte przez inną postać
+				if self.grid[nx, ny] == -1:  # Pole jest wolne
+					moves[i] = True
+
+		return moves
+	
+	def reset_map(self):
+		"""
+		Funkcja resetująca stan mapy i aktywność postaci,
+		przy przygotowaniu mapy do nowego cyklu lub epoki.
+		"""
+		# Resetowanie pozycji na mapie (wszystkie wartości w grid do -1)
+		self.grid.fill(-1)
+
+		# Resetowanie danych postaci (wygaszenie wszystkich postaci i ich danych)
+		self.characters.fill(0)
+		self.character_active.fill(False)
+
+		# Dodawanie nowych postaci na mapę
+		for character_id in range(self.max_characters):
+			# Generowanie losowej pozycji startowej
+			while True:
+				start_x = np.random.randint(0, self.width)
+				start_y = np.random.randint(0, self.height)
+
+				# Sprawdzanie, czy pole jest wolne
+				if self.grid[start_x, start_y] == -1:
+					break  # Jeśli pole jest wolne, wychodzimy z pętli
+
+			# Generowanie losowych danych dla postaci (np. losowe wartości w tablicy)
+			data = np.random.rand(self.data_length)  # Przykład generowania losowych danych (np. 3 dane)
+
+			# Dodawanie postaci na mapę
+			self.add_character(character_id, start_x, start_y, data)
+			#print(f"Postać {character_id} dodana na pozycję ({start_x}, {start_y}) z danymi: {data}")
